@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Kru Pai Pencil Test V3 - Direct Draw</title>
+<title>Kru Pai Pencil Test V4 - Rapid Stroke</title>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f7fb;color:#183153}
@@ -35,9 +35,9 @@ button.active{outline:3px solid #183153}
 <div class="wrap">
   <div class="top">
     <div class="brand">Kru Pai Classroom ✍️</div>
-    <div class="badge">Pen Engine V3 • Direct Draw</div>
+    <div class="badge">Pen Engine V4 • Rapid Stroke</div>
   </div>
-  <div class="note">ลองเขียนต่อเนื่องเร็ว ๆ: <b>5 8 3 2</b> → วงกลมหลายรอบ → สมการยาว 1 บรรทัด โดยไม่ต้องรีบยกปากกา</div>
+  <div class="note">ทดสอบเร็ว ๆ: <b>===== &nbsp; XXXXX &nbsp; +++++ &nbsp; 88888</b> — ขีดเส้นถัดไปทันทีหลังยก Pencil ไม่ต้องรอ</div>
 
   <div class="paper" id="paper"><canvas id="c"></canvas></div>
 
@@ -130,14 +130,22 @@ button.active{outline:3px solid #183153}
   }
 
   function start(e){
-    if(activePointer !== null) return;
     if(e.cancelable) e.preventDefault();
+
+    // Rapid-stroke fix for iPad/Safari:
+    // Never discard a new pointerdown just because the previous lifecycle
+    // has not fully settled yet.
+    if(current){
+      if(current.pts.length===0) strokes.pop();
+      current=null;
+      activePointer=null;
+    }
+
     activePointer=e.pointerId;
-    try{ canvas.setPointerCapture(e.pointerId); }catch(_){}
     current={erase:mode==='eraser',pts:[]};
     strokes.push(current);
     appendEvents(e);
-    status.textContent=(e.pointerType==='pen'?'Apple Pencil / Pen':e.pointerType||'pointer')+' • กำลังเขียน';
+    status.textContent=(e.pointerType==='pen'?'Apple Pencil / Pen':e.pointerType||'pointer')+' • stroke ใหม่';
   }
 
   function move(e){
@@ -151,9 +159,18 @@ button.active{outline:3px solid #183153}
     if(e.cancelable) e.preventDefault();
     appendEvents(e);
     if(current && current.pts.length===0) strokes.pop();
-    current=null; activePointer=null;
-    try{ canvas.releasePointerCapture(e.pointerId); }catch(_){}
+    current=null;
+    activePointer=null;
     status.textContent='พร้อมเขียน';
+  }
+
+  function cancel(e){
+    if(activePointer===null || e.pointerId===activePointer){
+      if(current && current.pts.length===0) strokes.pop();
+      current=null;
+      activePointer=null;
+      status.textContent='พร้อมเขียน';
+    }
   }
 
   function redrawStroke(s){
@@ -175,9 +192,11 @@ button.active{outline:3px solid #183153}
   }
 
   canvas.addEventListener('pointerdown',start,{passive:false});
-  canvas.addEventListener('pointermove',move,{passive:false});
-  canvas.addEventListener('pointerup',end,{passive:false});
-  canvas.addEventListener('pointercancel',end,{passive:false});
+  // Window listeners let a stroke finish even when Pencil briefly exits canvas,
+  // without relying on pointer capture.
+  window.addEventListener('pointermove',move,{passive:false});
+  window.addEventListener('pointerup',end,{passive:false});
+  window.addEventListener('pointercancel',cancel,{passive:false});
   canvas.addEventListener('contextmenu',e=>e.preventDefault());
 
   document.getElementById('pen').onclick=()=>{
