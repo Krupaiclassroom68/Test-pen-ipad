@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Kru Pai Pencil Test V4 - Rapid Stroke</title>
+<title>Kru Pai Pencil Test V5 - iPad Gesture Lock</title>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f7fb;color:#183153}
@@ -35,11 +35,11 @@ button.active{outline:3px solid #183153}
 <div class="wrap">
   <div class="top">
     <div class="brand">Kru Pai Classroom ✍️</div>
-    <div class="badge">Pen Engine V4 • Rapid Stroke</div>
+    <div class="badge">Pen Engine V5 • iPad Gesture Lock</div>
   </div>
-  <div class="note">ทดสอบเร็ว ๆ: <b>===== &nbsp; XXXXX &nbsp; +++++ &nbsp; 88888</b> — ขีดเส้นถัดไปทันทีหลังยก Pencil ไม่ต้องรอ</div>
+  <div class="note">ทดสอบจุดเดียวเลย: <b>===== &nbsp; XXXXX &nbsp; +++++</b> — ขีดที่สองทันที และดูว่าเมนู/สัญลักษณ์ “คัดลอก” ยังโผล่หรือไม่</div>
 
-  <div class="paper" id="paper"><canvas id="c"></canvas></div>
+  <div class="paper" id="paper"><canvas id="c" draggable="false"></canvas></div>
 
   <div class="tools">
     <button id="pen" class="active">✏️ ปากกา</button>
@@ -191,13 +191,48 @@ button.active{outline:3px solid #183153}
     ctx.restore();
   }
 
+
+  // V5 — iPad gesture lock.
+  // Keep browser selection/callout/drag gestures from stealing the second
+  // rapid Pencil stroke. These handlers are deliberately scoped to the paper.
+  const block = e => {
+    if (paper.contains(e.target)) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  ['contextmenu','selectstart','dragstart','gesturestart','gesturechange','gestureend']
+    .forEach(type => paper.addEventListener(type, block, {capture:true, passive:false}));
+
+  // Safari may surface text-selection UI after a very fast second contact.
+  // Clear any accidental selection without touching the canvas drawing.
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.rangeCount && !sel.isCollapsed) {
+      const a = sel.anchorNode, f = sel.focusNode;
+      if ((a && paper.contains(a.nodeType===1?a:a.parentNode)) ||
+          (f && paper.contains(f.nodeType===1?f:f.parentNode))) {
+        sel.removeAllRanges();
+      }
+    }
+  });
+
+  // Legacy WebKit touch fallback: only suppress browser gestures that start
+  // on the drawing surface. Pointer Events still do the actual drawing.
+  ['touchstart','touchmove','touchend'].forEach(type => {
+    paper.addEventListener(type, e => {
+      if (e.cancelable) e.preventDefault();
+    }, {capture:true, passive:false});
+  });
+
   canvas.addEventListener('pointerdown',start,{passive:false});
   // Window listeners let a stroke finish even when Pencil briefly exits canvas,
   // without relying on pointer capture.
   window.addEventListener('pointermove',move,{passive:false});
   window.addEventListener('pointerup',end,{passive:false});
   window.addEventListener('pointercancel',cancel,{passive:false});
-  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
 
   document.getElementById('pen').onclick=()=>{
     mode='pen'; pen.classList.add('active'); eraser.classList.remove('active');
