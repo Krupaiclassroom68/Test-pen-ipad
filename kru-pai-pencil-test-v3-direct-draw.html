@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Kru Pai Pencil Test V3 - Direct Draw</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f7fb;color:#183153}
+body{padding:14px;overscroll-behavior:none}
+.wrap{max-width:900px;margin:auto}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.brand{font-weight:900;font-size:clamp(20px,4vw,30px)}
+.badge{background:#fff;border:2px solid #d9e4f2;border-radius:999px;padding:7px 12px;font-weight:800}
+.note{margin:7px 0 12px;font-size:15px;line-height:1.45}
+.paper{
+  position:relative;height:min(68vh,620px);min-height:430px;background:#fff;
+  border:2px solid #cbd9e8;border-radius:18px;overflow:hidden;
+  box-shadow:0 10px 30px rgba(30,70,110,.10);
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 35px,#dbe6ef 36px,#dbe6ef 37px);
+}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{border:0;border-radius:13px;padding:11px 15px;font-size:16px;font-weight:850;background:#fff;box-shadow:0 3px 12px rgba(30,70,110,.12)}
+button.active{outline:3px solid #183153}
+.status{margin-left:auto;align-self:center;font-weight:800;font-size:14px}
+@media(max-width:600px){
+ body{padding:8px}.paper{height:72vh;min-height:420px;border-radius:14px}
+ .note{font-size:14px}.tools{gap:6px}button{padding:10px 12px;font-size:15px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">Kru Pai Classroom ✍️</div>
+    <div class="badge">Pen Engine V3 • Direct Draw</div>
+  </div>
+  <div class="note">ลองเขียนต่อเนื่องเร็ว ๆ: <b>5 8 3 2</b> → วงกลมหลายรอบ → สมการยาว 1 บรรทัด โดยไม่ต้องรีบยกปากกา</div>
+
+  <div class="paper" id="paper"><canvas id="c"></canvas></div>
+
+  <div class="tools">
+    <button id="pen" class="active">✏️ ปากกา</button>
+    <button id="eraser">🧽 ยางลบ</button>
+    <button id="undo">↶ ย้อนเส้น</button>
+    <button id="clear">🗑️ ล้าง</button>
+    <span class="status" id="status">พร้อมเขียน</span>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const paper = document.getElementById('paper');
+  const ctx = canvas.getContext('2d', {alpha:true, desynchronized:true});
+  const status = document.getElementById('status');
+
+  let strokes = [];
+  let current = null;
+  let activePointer = null;
+  let mode = 'pen';
+  let cssW = 1, cssH = 1, dpr = 1;
+
+  function resize(){
+    const r = paper.getBoundingClientRect();
+    cssW = Math.max(1, r.width);
+    cssH = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(cssW*dpr);
+    canvas.height = Math.round(cssH*dpr);
+    canvas.style.width = cssW+'px';
+    canvas.style.height = cssH+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    redrawAll();
+  }
+
+  function pointFromEvent(e){
+    const r = canvas.getBoundingClientRect();
+    return {x:e.clientX-r.left, y:e.clientY-r.top};
+  }
+
+  function normalized(p){ return {x:p.x/cssW, y:p.y/cssH}; }
+  function denorm(p){ return {x:p.x*cssW, y:p.y*cssH}; }
+
+  function setupStrokeStyle(erase){
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.lineWidth = erase ? 20 : 2.8;
+    ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = '#183153';
+    ctx.fillStyle = '#183153';
+  }
+
+  // วาดเฉพาะ segment ใหม่ระหว่างที่กำลังเขียน — ไม่มี full redraw ใน pointermove
+  function drawSegment(a,b,erase){
+    setupStrokeStyle(erase);
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);
+    ctx.lineTo(b.x,b.y);
+    ctx.stroke();
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  function drawDot(p,erase){
+    setupStrokeStyle(erase);
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,(erase?20:2.8)/2,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  function appendEvents(e){
+    if(!current) return;
+    const events = (typeof e.getCoalescedEvents === 'function')
+      ? e.getCoalescedEvents() : [e];
+    for(const ev of events){
+      const p = pointFromEvent(ev);
+      const lastN = current.pts[current.pts.length-1];
+      if(lastN){
+        const last = denorm(lastN);
+        const dx=p.x-last.x, dy=p.y-last.y;
+        if(dx*dx+dy*dy < 0.12) continue;
+        drawSegment(last,p,current.erase);
+      }else{
+        drawDot(p,current.erase);
+      }
+      current.pts.push(normalized(p));
+    }
+  }
+
+  function start(e){
+    if(activePointer !== null) return;
+    if(e.cancelable) e.preventDefault();
+    activePointer=e.pointerId;
+    try{ canvas.setPointerCapture(e.pointerId); }catch(_){}
+    current={erase:mode==='eraser',pts:[]};
+    strokes.push(current);
+    appendEvents(e);
+    status.textContent=(e.pointerType==='pen'?'Apple Pencil / Pen':e.pointerType||'pointer')+' • กำลังเขียน';
+  }
+
+  function move(e){
+    if(e.pointerId!==activePointer || !current) return;
+    if(e.cancelable) e.preventDefault();
+    appendEvents(e);
+  }
+
+  function end(e){
+    if(e.pointerId!==activePointer) return;
+    if(e.cancelable) e.preventDefault();
+    appendEvents(e);
+    if(current && current.pts.length===0) strokes.pop();
+    current=null; activePointer=null;
+    try{ canvas.releasePointerCapture(e.pointerId); }catch(_){}
+    status.textContent='พร้อมเขียน';
+  }
+
+  function redrawStroke(s){
+    if(!s.pts.length) return;
+    setupStrokeStyle(s.erase);
+    const pts=s.pts.map(denorm);
+    if(pts.length===1){ drawDot(pts[0],s.erase); return; }
+    ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
+    ctx.stroke(); ctx.globalCompositeOperation='source-over';
+  }
+
+  function redrawAll(){
+    ctx.save();
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,cssW,cssH);
+    for(const s of strokes) redrawStroke(s);
+    ctx.restore();
+  }
+
+  canvas.addEventListener('pointerdown',start,{passive:false});
+  canvas.addEventListener('pointermove',move,{passive:false});
+  canvas.addEventListener('pointerup',end,{passive:false});
+  canvas.addEventListener('pointercancel',end,{passive:false});
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+  document.getElementById('pen').onclick=()=>{
+    mode='pen'; pen.classList.add('active'); eraser.classList.remove('active');
+  };
+  document.getElementById('eraser').onclick=()=>{
+    mode='eraser'; eraser.classList.add('active'); pen.classList.remove('active');
+  };
+  document.getElementById('undo').onclick=()=>{
+    if(activePointer!==null) return;
+    strokes.pop(); redrawAll();
+  };
+  document.getElementById('clear').onclick=()=>{
+    if(activePointer!==null) return;
+    strokes=[]; redrawAll();
+  };
+
+  const ro = new ResizeObserver(()=>resize());
+  ro.observe(paper);
+  resize();
+})();
+</script>
+</body>
+</html>
